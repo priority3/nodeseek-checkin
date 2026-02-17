@@ -1,0 +1,19 @@
+name: NodeSeek Daily Check-in
+
+on:
+  schedule:
+    # UTC 时间每天 0:30 执行（即北京时间 8:30）
+    - cron: '30 0 * * *'
+  workflow_dispatch: # 支持手动触发
+
+jobs:
+  checkin:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run Check-in
+        env:
+          NS_COOKIE: ${{ secrets.NS_COOKIE }}
+        run: bash checkin.sh
