@@ -1,0 +1,13 @@
+{
+  "name": "nodeseek-checkin",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "checkin": "node checkin.js"
+  },
+  "dependencies": {
+    "puppeteer": "^24.2.0",
+    "puppeteer-extra": "^3.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2"
+  }
+}
