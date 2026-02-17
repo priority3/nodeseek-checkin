@@ -4,8 +4,11 @@ const StealthPlugin = require("puppeteer-extra-plugin-stealth");
 // Reason: stealth 插件修补了多个浏览器指纹特征，降低被 Cloudflare 检测为自动化的概率
 puppeteer.use(StealthPlugin());
 
+const https = require("https");
+
 const CHECKIN_URL = "https://www.nodeseek.com/api/attendance?random=true";
 const SITE_URL = "https://www.nodeseek.com/board";
+const PUSHPLUS_API = "https://www.pushplus.plus/send";
 const CF_WAIT_MS = 15000;
 const NAV_TIMEOUT_MS = 60000;
 
@@ -97,27 +100,87 @@ async function checkin() {
     console.log(`HTTP Status: ${result.status}`);
     console.log(`Response: ${result.body}`);
 
-    // 解析结果
+    // 解析结果并构建通知标题
+    let title;
+    let body;
+    let failed = false;
+
     try {
       const data = JSON.parse(result.body);
       if (data.success) {
+        title = `NodeSeek签到成功 +${data.gain}鸡腿 (总计${data.current})`;
+        body = data.message;
         console.log("Check-in succeeded!");
       } else if (data.message) {
+        title = `NodeSeek签到: ${data.message}`;
+        body = result.body;
         console.log(`Check-in result: ${data.message}`);
       } else {
-        console.error("Unexpected response format.");
-        process.exit(1);
+        title = "NodeSeek签到失败: 未知响应";
+        body = result.body;
+        failed = true;
       }
     } catch {
-      console.error("Failed to parse response as JSON.");
-      process.exit(1);
+      title = `NodeSeek签到失败: HTTP ${result.status}`;
+      body = result.body;
+      failed = true;
     }
+
+    await notify(title, body);
+    if (failed) process.exit(1);
   } finally {
     await browser.close();
   }
 }
 
-checkin().catch((err) => {
+/**
+ * 通过 PushPlus 发送微信通知
+ * Reason: 将签到结果放在 title 中，微信通知可以直接看到结果无需点开
+ */
+function notify(title, content) {
+  const token = process.env.PUSHPLUS_TOKEN;
+  if (!token) {
+    console.log("PUSHPLUS_TOKEN not set, skipping notification.");
+    return Promise.resolve();
+  }
+
+  const payload = JSON.stringify({
+    token,
+    title,
+    content: content || title,
+    template: "txt",
+  });
+
+  return new Promise((resolve) => {
+    const req = https.request(
+      PUSHPLUS_API,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Content-Length": Buffer.byteLength(payload),
+        },
+      },
+      (res) => {
+        let data = "";
+        res.on("data", (chunk) => (data += chunk));
+        res.on("end", () => {
+          console.log(`PushPlus response: ${data}`);
+          resolve();
+        });
+      }
+    );
+    req.on("error", (err) => {
+      console.error(`PushPlus notify failed: ${err.message}`);
+      resolve();
+    });
+    req.write(payload);
+    req.end();
+  });
+}
+
+checkin().catch(async (err) => {
   console.error("Fatal error:", err.message);
+  await notify(`NodeSeek签到异常: ${err.message}`, err.stack);
   process.exit(1);
 });
