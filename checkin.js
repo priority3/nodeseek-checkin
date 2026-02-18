@@ -108,20 +108,20 @@ async function checkin() {
     try {
       const data = JSON.parse(result.body);
       if (data.success) {
-        title = `NodeSeek签到成功 +${data.gain}鸡腿 (总计${data.current})`;
+        title = `[nodeseek-checkin] NodeSeek签到成功 +${data.gain}鸡腿 (总计${data.current})`;
         body = data.message;
         console.log("Check-in succeeded!");
       } else if (data.message) {
-        title = `NodeSeek签到: ${data.message}`;
+        title = `[nodeseek-checkin] NodeSeek签到: ${data.message}`;
         body = result.body;
         console.log(`Check-in result: ${data.message}`);
       } else {
-        title = "NodeSeek签到失败: 未知响应";
+        title = "[nodeseek-checkin] NodeSeek签到失败: 未知响应";
         body = result.body;
         failed = true;
       }
     } catch {
-      title = `NodeSeek签到失败: HTTP ${result.status}`;
+      title = `[nodeseek-checkin] NodeSeek签到失败: HTTP ${result.status}`;
       body = result.body;
       failed = true;
     }
@@ -181,6 +181,6 @@ function notify(title, content) {
 
 checkin().catch(async (err) => {
   console.error("Fatal error:", err.message);
-  await notify(`NodeSeek签到异常: ${err.message}`, err.stack);
+  await notify(`[nodeseek-checkin] NodeSeek签到异常: ${err.message}`, err.stack);
   process.exit(1);
 });
