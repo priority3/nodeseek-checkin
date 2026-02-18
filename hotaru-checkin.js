@@ -169,13 +169,13 @@ async function checkin() {
         title = `HotaruAPI签到成功${
           award === null
             ? ""
-            : ` +${formatNumber(award)} (≈$${awardUsd})`
+            : ` +${formatNumber(award)} ($${awardUsd})`
         }${date ? ` (${date})` : ""}${msg ? `: ${msg}` : ""}`;
 
         contentLines.push(`Check-in: ${msg || "success"}`);
         if (award !== null) {
           contentLines.push(
-            `Awarded: ${formatNumber(award)} quota (≈$${awardUsd})`
+            `Awarded: ${formatNumber(award)} quota ($${awardUsd})`
           );
         }
         if (date) contentLines.push(`Date: ${date}`);
@@ -200,17 +200,17 @@ async function checkin() {
 
   if (typeof selfQuota === "number") {
     const balanceUsd = quotaToUsd(selfQuota);
-    title = `${title} | 余额≈$${balanceUsd}`;
+    title = `${title} | 余额 $${balanceUsd}`;
 
     contentLines.push("");
     contentLines.push("Balance:");
     contentLines.push(
-      `Quota: ${formatNumber(selfQuota)} (≈$${balanceUsd})`
+      `Quota: ${formatNumber(selfQuota)} ($${balanceUsd})`
     );
     if (typeof selfUsedQuota === "number") {
       const usedUsd = quotaToUsd(selfUsedQuota);
       contentLines.push(
-        `Used: ${formatNumber(selfUsedQuota)} (≈$${usedUsd})`
+        `Used: ${formatNumber(selfUsedQuota)} ($${usedUsd})`
       );
     }
   } else {
