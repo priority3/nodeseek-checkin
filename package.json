@@ -3,7 +3,8 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "checkin": "node checkin.js"
+    "checkin": "node checkin.js",
+    "checkin:hotaru": "node hotaru-checkin.js"
   },
   "dependencies": {
     "puppeteer": "^24.2.0",

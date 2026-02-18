@@ -1,0 +1,35 @@
+name: HotaruAPI Daily Check-in
+
+on:
+  schedule:
+    # UTC 时间每天 0:40 执行（即北京时间 8:40）
+    - cron: "40 0 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  checkin:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        env:
+          # This workflow does not run Puppeteer; skipping Chromium download makes it much faster.
+          PUPPETEER_SKIP_DOWNLOAD: "1"
+        run: npm ci
+
+      - name: Run Check-in
+        env:
+          # Option A (recommended): full cookie string: "session=...; new-api-user=9494"
+          HOTARU_COOKIE: ${{ secrets.HOTARU_COOKIE }}
+          # Option B: split secrets (only used when HOTARU_COOKIE is empty)
+          HOTARU_SESSION: ${{ secrets.HOTARU_SESSION }}
+          HOTARU_USER: ${{ secrets.HOTARU_USER }}
+          PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
+        run: node hotaru-checkin.js
