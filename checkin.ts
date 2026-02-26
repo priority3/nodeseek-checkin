@@ -1,10 +1,9 @@
-const puppeteer = require("puppeteer-extra");
-const StealthPlugin = require("puppeteer-extra-plugin-stealth");
+import puppeteer from "puppeteer-extra";
+import StealthPlugin from "puppeteer-extra-plugin-stealth";
+import https from "https";
 
 // Reason: stealth 插件修补了多个浏览器指纹特征，降低被 Cloudflare 检测为自动化的概率
 puppeteer.use(StealthPlugin());
-
-const https = require("https");
 
 const CHECKIN_URL = "https://www.nodeseek.com/api/attendance?random=true";
 const SITE_URL = "https://www.nodeseek.com/board";
@@ -12,10 +11,29 @@ const PUSHPLUS_API = "https://www.pushplus.plus/send";
 const CF_WAIT_MS = 15000;
 const NAV_TIMEOUT_MS = 60000;
 
+interface CookieParam {
+  name: string;
+  value: string;
+  domain: string;
+  path: string;
+}
+
+interface PageEvalResult {
+  status: number;
+  body: string;
+}
+
+interface CheckinResponseData {
+  success?: boolean;
+  gain?: number | string;
+  current?: number | string;
+  message?: string;
+}
+
 /**
  * 将 cookie 字符串解析为 Puppeteer 可用的 cookie 对象数组
  */
-function parseCookies(cookieStr) {
+function parseCookies(cookieStr: string): CookieParam[] {
   return cookieStr
     .split(";")
     .map((c) => {
@@ -26,10 +44,10 @@ function parseCookies(cookieStr) {
       if (!name) return null;
       return { name, value, domain: ".nodeseek.com", path: "/" };
     })
-    .filter(Boolean);
+    .filter((c): c is CookieParam => c !== null);
 }
 
-async function checkin() {
+async function checkin(): Promise<void> {
   const cookieStr = process.env.NS_COOKIE;
   if (!cookieStr) {
     console.error("ERROR: NS_COOKIE is not set.");
@@ -43,7 +61,7 @@ async function checkin() {
   console.log(`Parsed ${cookies.length} cookies`);
 
   const browser = await puppeteer.launch({
-    headless: "new",
+    headless: true,
     args: [
       "--no-sandbox",
       "--disable-setuid-sandbox",
@@ -60,7 +78,8 @@ async function checkin() {
     );
 
     // Reason: 先设置 cookie 再导航，这样 session cookie 会随首次请求一起发送
-    await page.setCookie(...cookies);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await page.setCookie(...(cookies as any[]));
 
     console.log("Navigating to NodeSeek...");
     await page.goto(SITE_URL, {
@@ -84,7 +103,7 @@ async function checkin() {
     // Reason: 在已通过 Cloudflare 验证的浏览器上下文中发起 fetch，
     // 这样请求会自动携带 cf_clearance cookie 和正确的浏览器指纹
     console.log("Sending check-in request...");
-    const result = await page.evaluate(async (url) => {
+    const result: PageEvalResult = await page.evaluate(async (url: string) => {
       try {
         const res = await fetch(url, {
           method: "POST",
@@ -93,7 +112,7 @@ async function checkin() {
         });
         return { status: res.status, body: await res.text() };
       } catch (err) {
-        return { status: 0, body: err.message };
+        return { status: 0, body: (err as Error).message };
       }
     }, CHECKIN_URL);
 
@@ -101,15 +120,15 @@ async function checkin() {
     console.log(`Response: ${result.body}`);
 
     // 解析结果并构建通知标题
-    let title;
-    let body;
+    let title: string;
+    let body: string;
     let failed = false;
 
     try {
-      const data = JSON.parse(result.body);
+      const data = JSON.parse(result.body) as CheckinResponseData;
       if (data.success) {
         title = `[nodeseek-checkin] NodeSeek签到成功 +${data.gain}鸡腿 (总计${data.current})`;
-        body = data.message;
+        body = data.message ?? result.body;
         console.log("Check-in succeeded!");
       } else if (data.message) {
         title = `[nodeseek-checkin] NodeSeek签到: ${data.message}`;
@@ -137,7 +156,7 @@ async function checkin() {
  * 通过 PushPlus 发送微信通知
  * Reason: 将签到结果放在 title 中，微信通知可以直接看到结果无需点开
  */
-function notify(title, content) {
+function notify(title: string, content: string): Promise<void> {
   const token = process.env.PUSHPLUS_TOKEN;
   if (!token) {
     console.log("PUSHPLUS_TOKEN not set, skipping notification.");
@@ -163,14 +182,14 @@ function notify(title, content) {
       },
       (res) => {
         let data = "";
-        res.on("data", (chunk) => (data += chunk));
+        res.on("data", (chunk: Buffer) => (data += chunk));
         res.on("end", () => {
           console.log(`PushPlus response: ${data}`);
           resolve();
         });
       }
     );
-    req.on("error", (err) => {
+    req.on("error", (err: Error) => {
       console.error(`PushPlus notify failed: ${err.message}`);
       resolve();
     });
@@ -179,8 +198,8 @@ function notify(title, content) {
   });
 }
 
-checkin().catch(async (err) => {
+checkin().catch(async (err: Error) => {
   console.error("Fatal error:", err.message);
-  await notify(`[nodeseek-checkin] NodeSeek签到异常: ${err.message}`, err.stack);
+  await notify(`[nodeseek-checkin] NodeSeek签到异常: ${err.message}`, err.stack ?? "");
   process.exit(1);
 });

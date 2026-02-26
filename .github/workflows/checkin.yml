@@ -25,4 +25,4 @@ jobs:
         env:
           NS_COOKIE: ${{ secrets.NS_COOKIE }}
           PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
-        run: node checkin.js
+        run: npx tsx checkin.ts

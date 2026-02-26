@@ -32,4 +32,4 @@ jobs:
           HOTARU_SESSION: ${{ secrets.HOTARU_SESSION }}
           HOTARU_USER: ${{ secrets.HOTARU_USER }}
           PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
-        run: node hotaru-checkin.js
+        run: npx tsx hotaru-checkin.ts

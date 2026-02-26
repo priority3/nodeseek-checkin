@@ -3,12 +3,18 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "checkin": "node checkin.js",
-    "checkin:hotaru": "node hotaru-checkin.js"
+    "checkin": "tsx checkin.ts",
+    "checkin:hotaru": "tsx hotaru-checkin.ts",
+    "checkin:apitestus": "tsx apitestus-checkin.ts"
   },
   "dependencies": {
     "puppeteer": "^24.2.0",
     "puppeteer-extra": "^3.3.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.34",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
   }
 }

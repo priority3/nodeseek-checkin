@@ -1,0 +1,34 @@
+name: api-test.us Daily Check-in
+
+on:
+  schedule:
+    # UTC 时间每天 0:50 执行（即北京时间 8:50）
+    - cron: "50 0 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  checkin:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        env:
+          PUPPETEER_SKIP_DOWNLOAD: "1"
+        run: npm ci
+
+      - name: Run Check-in
+        env:
+          # Option A (recommended): full cookie string: "session=...; new-api-user=6191"
+          APITESTUS_COOKIE: ${{ secrets.APITESTUS_COOKIE }}
+          # Option B: split secrets (only used when APITESTUS_COOKIE is empty)
+          APITESTUS_SESSION: ${{ secrets.APITESTUS_SESSION }}
+          APITESTUS_USER: ${{ secrets.APITESTUS_USER }}
+          PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
+        run: npx tsx apitestus-checkin.ts
