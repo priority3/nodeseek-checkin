@@ -62,13 +62,38 @@ function buildCookieHeader(opts: {
   session?: string;
   userId?: string;
 }): string {
-  if (opts.cookie) return opts.cookie.trim();
-  const s = (opts.session ?? "").trim();
-  const u = (opts.userId ?? "").trim();
-  if (!s || !u) return "";
-  const sessionPair = s.startsWith("session=") ? s : `session=${s}`;
-  const userPair = u.startsWith("new-api-user=") ? u : `new-api-user=${u}`;
-  return `${sessionPair}; ${userPair}`;
+  const baseCookie = (opts.cookie ?? "").trim();
+  const sessionRaw = (opts.session ?? "").trim();
+  const userRaw = (opts.userId ?? "").trim();
+  const sessionValue = sessionRaw.startsWith("session=")
+    ? sessionRaw.slice("session=".length)
+    : sessionRaw;
+  const userValue = userRaw.startsWith("new-api-user=")
+    ? userRaw.slice("new-api-user=".length)
+    : userRaw;
+
+  if (baseCookie) {
+    const pairs = baseCookie
+      .split(";")
+      .map((v) => v.trim())
+      .filter(Boolean);
+
+    const replacePair = (key: string, value: string): void => {
+      if (!value) return;
+      const keyPrefix = `${key}=`;
+      const filtered = pairs.filter((p) => !p.startsWith(keyPrefix));
+      filtered.push(`${key}=${value}`);
+      pairs.length = 0;
+      pairs.push(...filtered);
+    };
+
+    replacePair("session", sessionValue);
+    replacePair("new-api-user", userValue);
+    return pairs.join("; ");
+  }
+
+  if (!sessionValue || !userValue) return "";
+  return `session=${sessionValue}; new-api-user=${userValue}`;
 }
 
 function formatNumber(n: number): string {
