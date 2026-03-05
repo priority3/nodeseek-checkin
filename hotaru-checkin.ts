@@ -100,6 +100,9 @@ function shouldRetryByBody(status: number, body: string): boolean {
     const wantsRetryByMessage =
       msg.includes("稍后重试") ||
       msg.includes("请稍后") ||
+      msg.includes("连接过多") ||
+      /too many connections/i.test(msg) ||
+      /error\s*1040/i.test(msg) ||
       /try again/i.test(msg) ||
       /temporar/i.test(msg) ||
       /busy/i.test(msg) ||
