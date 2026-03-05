@@ -147,11 +147,34 @@ function shouldRetryByBody(status: number, body: string): boolean {
   return false;
 }
 
+function isConnectionSaturatedBody(body: string): boolean {
+  if (!body) return false;
+
+  let message = body;
+  try {
+    const data = JSON.parse(body) as CheckinResponseData;
+    const rawMsg = data?.message ?? data?.msg ?? data?.error ?? "";
+    if (typeof rawMsg === "string" && rawMsg) message = rawMsg;
+  } catch {
+    // ignore parse failure and fallback to raw body text matching
+  }
+
+  return (
+    message.includes("连接过多") ||
+    /too many connections/i.test(message) ||
+    /error\s*1040/i.test(message)
+  );
+}
+
 async function postCheckinWithRetry(cookieHeader: string, userId: string): Promise<CheckinResult> {
   const maxAttempts = parsePositiveInt(process.env.HOTARU_CHECKIN_MAX_ATTEMPTS, 3);
   // Keep timeout slightly above common proxy timeout windows to avoid aborting too early.
   const timeoutMs = parsePositiveInt(process.env.HOTARU_CHECKIN_TIMEOUT_MS, 135000);
   const retryDelayMs = parsePositiveInt(process.env.HOTARU_CHECKIN_RETRY_DELAY_MS, 3000);
+  const connectionRetryDelayMs = parsePositiveInt(
+    process.env.HOTARU_CHECKIN_CONNECTION_RETRY_DELAY_MS,
+    30000
+  );
 
   let lastStatus = 0;
   let lastText = "";
@@ -180,6 +203,7 @@ async function postCheckinWithRetry(cookieHeader: string, userId: string): Promi
       const text = await res.text();
       const retryable = RETRYABLE_STATUSES.has(res.status);
       const retryableByBody = shouldRetryByBody(res.status, text);
+      const connectionSaturated = isConnectionSaturatedBody(text);
       console.log(`Check-in attempt ${attempt}/${maxAttempts}: HTTP ${res.status}`);
 
       if ((res.ok && !retryableByBody) || (!retryable && !retryableByBody) || attempt === maxAttempts) {
@@ -194,8 +218,13 @@ async function postCheckinWithRetry(cookieHeader: string, userId: string): Promi
 
       lastStatus = res.status;
       lastText = text;
-      const delay = retryDelayMs * attempt;
-      if (retryableByBody) {
+      const delay =
+        retryableByBody && connectionSaturated
+          ? connectionRetryDelayMs * attempt
+          : retryDelayMs * attempt;
+      if (retryableByBody && connectionSaturated) {
+        console.log(`Retrying in ${delay}ms due to connection saturation (Error 1040)...`);
+      } else if (retryableByBody) {
         console.log(`Retrying in ${delay}ms due to retryable API response body...`);
       } else {
         console.log(`Retrying in ${delay}ms due to retryable HTTP ${res.status}...`);
