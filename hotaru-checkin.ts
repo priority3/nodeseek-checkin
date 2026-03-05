@@ -121,7 +121,8 @@ function shouldRetryByBody(status: number, body: string): boolean {
 
 async function postCheckinWithRetry(cookieHeader: string, userId: string): Promise<CheckinResult> {
   const maxAttempts = parsePositiveInt(process.env.HOTARU_CHECKIN_MAX_ATTEMPTS, 3);
-  const timeoutMs = parsePositiveInt(process.env.HOTARU_CHECKIN_TIMEOUT_MS, 45000);
+  // Keep timeout slightly above common proxy timeout windows to avoid aborting too early.
+  const timeoutMs = parsePositiveInt(process.env.HOTARU_CHECKIN_TIMEOUT_MS, 135000);
   const retryDelayMs = parsePositiveInt(process.env.HOTARU_CHECKIN_RETRY_DELAY_MS, 3000);
 
   let lastStatus = 0;
