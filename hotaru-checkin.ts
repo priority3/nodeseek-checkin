@@ -8,6 +8,7 @@ const PUSHPLUS_API = "https://www.pushplus.plus/send";
 
 // Reason: observed mapping from console display: quota / 500000 = USD (6 decimals)
 const QUOTA_PER_USD = 500000;
+const RETRYABLE_STATUSES = new Set([408, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524]);
 
 interface CheckinResponseData {
   success?: boolean;
@@ -32,6 +33,15 @@ interface SelfResult {
   status: number;
   text: string;
   data: SelfResponseData | null;
+}
+
+interface CheckinResult {
+  status: number;
+  ok: boolean;
+  text: string;
+  attempt: number;
+  totalAttempts: number;
+  error?: string;
 }
 
 function parseCookieValue(cookieStr: string, key: string): string {
@@ -67,6 +77,123 @@ function formatNumber(n: number): string {
 
 function quotaToUsd(quota: number): string {
   return (quota / QUOTA_PER_USD).toFixed(6);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function parsePositiveInt(value: string | undefined, fallback: number): number {
+  const n = Number.parseInt((value ?? "").trim(), 10);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+function shouldRetryByBody(status: number, body: string): boolean {
+  if (!body) return false;
+  if (status < 200 || status >= 300) return false;
+
+  try {
+    const data = JSON.parse(body) as CheckinResponseData;
+    const rawMsg = data?.message ?? data?.msg ?? data?.error ?? "";
+    const msg = typeof rawMsg === "string" ? rawMsg : "";
+
+    const wantsRetryByMessage =
+      msg.includes("稍后重试") ||
+      msg.includes("请稍后") ||
+      /try again/i.test(msg) ||
+      /temporar/i.test(msg) ||
+      /busy/i.test(msg) ||
+      /rate limit/i.test(msg);
+
+    if (!wantsRetryByMessage) return false;
+
+    // Do not retry if API says already checked in.
+    if (msg.includes("已签到") || msg.toLowerCase().includes("already")) return false;
+
+    if (typeof data?.success === "boolean" && !data.success) return true;
+    if (typeof data?.code === "number" && data.code !== 0) return true;
+  } catch {
+    // non-JSON responses do not trigger business-level retries
+  }
+
+  return false;
+}
+
+async function postCheckinWithRetry(cookieHeader: string, userId: string): Promise<CheckinResult> {
+  const maxAttempts = parsePositiveInt(process.env.HOTARU_CHECKIN_MAX_ATTEMPTS, 3);
+  const timeoutMs = parsePositiveInt(process.env.HOTARU_CHECKIN_TIMEOUT_MS, 45000);
+  const retryDelayMs = parsePositiveInt(process.env.HOTARU_CHECKIN_RETRY_DELAY_MS, 3000);
+
+  let lastStatus = 0;
+  let lastText = "";
+  let lastError = "";
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      const res = await fetch(CHECKIN_URL, {
+        method: "POST",
+        headers: {
+          Accept: "application/json, text/plain, */*",
+          "Cache-Control": "no-store",
+          Referer: REFERER_URL,
+          "User-Agent":
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+          Cookie: cookieHeader,
+          "New-API-User": userId,
+        },
+        signal: controller.signal,
+      });
+      clearTimeout(timer);
+
+      const text = await res.text();
+      const retryable = RETRYABLE_STATUSES.has(res.status);
+      const retryableByBody = shouldRetryByBody(res.status, text);
+      console.log(`Check-in attempt ${attempt}/${maxAttempts}: HTTP ${res.status}`);
+
+      if ((res.ok && !retryableByBody) || (!retryable && !retryableByBody) || attempt === maxAttempts) {
+        return {
+          status: res.status,
+          ok: res.ok,
+          text,
+          attempt,
+          totalAttempts: maxAttempts,
+        };
+      }
+
+      lastStatus = res.status;
+      lastText = text;
+      const delay = retryDelayMs * attempt;
+      if (retryableByBody) {
+        console.log(`Retrying in ${delay}ms due to retryable API response body...`);
+      } else {
+        console.log(`Retrying in ${delay}ms due to retryable HTTP ${res.status}...`);
+      }
+      await sleep(delay);
+    } catch (err) {
+      clearTimeout(timer);
+      const message = err instanceof Error ? err.message : String(err);
+      lastError = message;
+      console.warn(`Check-in attempt ${attempt}/${maxAttempts} failed: ${message}`);
+
+      if (attempt === maxAttempts) break;
+
+      const delay = retryDelayMs * attempt;
+      console.log(`Retrying in ${delay}ms due to network/timeout error...`);
+      await sleep(delay);
+    }
+  }
+
+  return {
+    status: lastStatus,
+    ok: false,
+    text: lastText || `Request failed after retries: ${lastError || "unknown error"}`,
+    attempt: maxAttempts,
+    totalAttempts: maxAttempts,
+    error: lastError || undefined,
+  };
 }
 
 async function fetchSelf(cookieHeader: string, userId: string): Promise<SelfResult> {
@@ -120,30 +247,22 @@ async function checkin(): Promise<void> {
   console.log(`Time: ${new Date().toISOString()}`);
   console.log(`User: ${userId}`);
 
-  const checkinRes = await fetch(CHECKIN_URL, {
-    method: "POST",
-    headers: {
-      Accept: "application/json, text/plain, */*",
-      "Cache-Control": "no-store",
-      Referer: REFERER_URL,
-      "User-Agent":
-        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
-      Cookie: cookieHeader,
-      "New-API-User": userId,
-    },
-  });
-
-  const checkinText = await checkinRes.text();
-  console.log(`HTTP Status: ${checkinRes.status}`);
+  const checkinRes = await postCheckinWithRetry(cookieHeader, userId);
+  const checkinText = checkinRes.text;
+  const finalStatus = checkinRes.status;
+  console.log(`HTTP Status: ${finalStatus || "N/A"}`);
+  console.log(`Attempts used: ${checkinRes.attempt}/${checkinRes.totalAttempts}`);
   console.log(`Response: ${checkinText}`);
 
   let title: string;
   const contentLines: string[] = [];
   let failed = false;
+  contentLines.push(`Attempts: ${checkinRes.attempt}/${checkinRes.totalAttempts}`);
 
   if (!checkinRes.ok) {
-    title = `HotaruAPI签到失败: HTTP ${checkinRes.status}`;
-    contentLines.push(`Check-in HTTP: ${checkinRes.status}`);
+    title = `HotaruAPI签到失败: HTTP ${finalStatus || "N/A"}`;
+    contentLines.push(`Check-in HTTP: ${finalStatus || "N/A"}`);
+    if (checkinRes.error) contentLines.push(`Error: ${checkinRes.error}`);
     contentLines.push(checkinText);
     failed = true;
   } else {
