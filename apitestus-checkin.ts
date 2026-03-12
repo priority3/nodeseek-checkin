@@ -35,31 +35,21 @@ interface SelfResult {
   data: SelfResponseData | null;
 }
 
-function parseCookieValue(cookieStr: string, key: string): string {
-  if (!cookieStr) return "";
-  const parts = cookieStr.split(";").map((p) => p.trim());
-  for (const p of parts) {
-    const idx = p.indexOf("=");
-    if (idx === -1) continue;
-    const k = p.slice(0, idx).trim();
-    if (k !== key) continue;
-    return p.slice(idx + 1).trim();
-  }
-  return "";
-}
-
 function buildCookieHeader(opts: {
-  cookie?: string;
   session?: string;
   userId?: string;
 }): string {
-  if (opts.cookie) return opts.cookie.trim();
-  const s = (opts.session ?? "").trim();
-  const u = (opts.userId ?? "").trim();
-  if (!s || !u) return "";
-  const sessionPair = s.startsWith("session=") ? s : `session=${s}`;
-  const userPair = u.startsWith("new-api-user=") ? u : `new-api-user=${u}`;
-  return `${sessionPair}; ${userPair}`;
+  const sessionRaw = (opts.session ?? "").trim();
+  const userRaw = (opts.userId ?? "").trim();
+  const sessionValue = sessionRaw.startsWith("session=")
+    ? sessionRaw.slice("session=".length)
+    : sessionRaw;
+  const userValue = userRaw.startsWith("new-api-user=")
+    ? userRaw.slice("new-api-user=".length)
+    : userRaw;
+
+  if (!sessionValue || !userValue) return "";
+  return `session=${sessionValue}; new-api-user=${userValue}`;
 }
 
 function formatNumber(n: number): string {
@@ -70,17 +60,38 @@ function quotaToUsd(quota: number): string {
   return (quota / QUOTA_PER_USD).toFixed(6);
 }
 
-async function fetchSelf(cookieHeader: string, userId: string): Promise<SelfResult> {
+function normalizeAccessToken(token: string): string {
+  const trimmed = token.trim().replace(/^"+|"+$/g, "");
+  if (!trimmed) return "";
+  if (/^bearer\s+/i.test(trimmed)) return trimmed.replace(/^bearer\s+/i, "").trim();
+  return trimmed;
+}
+
+function resolveAccessToken(envToken?: string): string {
+  return normalizeAccessToken(envToken ?? "");
+}
+
+async function fetchSelf(
+  cookieHeader: string,
+  userId: string,
+  accessToken: string
+): Promise<SelfResult> {
+  const headers: Record<string, string> = {
+    Accept: "application/json, text/plain, */*",
+    "Cache-Control": "no-store",
+    Referer: CONSOLE_URL,
+    "User-Agent":
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
+    Cookie: cookieHeader,
+    "New-API-User": userId,
+  };
+  if (accessToken) {
+    headers.Authorization = `Bearer ${accessToken}`;
+    headers["access-token"] = accessToken;
+  }
+
   const res = await fetch(SELF_URL, {
-    headers: {
-      Accept: "application/json, text/plain, */*",
-      "Cache-Control": "no-store",
-      Referer: CONSOLE_URL,
-      "User-Agent":
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
-      Cookie: cookieHeader,
-      "New-API-User": userId,
-    },
+    headers,
   });
 
   const text = await res.text();
@@ -94,44 +105,46 @@ async function fetchSelf(cookieHeader: string, userId: string): Promise<SelfResu
 }
 
 async function checkin(): Promise<void> {
-  const userIdFromEnv = (process.env.APITESTUS_USER ?? "").trim();
-
-  const cookieHeader = buildCookieHeader({
-    cookie: process.env.APITESTUS_COOKIE,
-    session: process.env.APITESTUS_SESSION,
-    userId: userIdFromEnv,
-  });
-
-  if (!cookieHeader) {
-    console.error(
-      "ERROR: APITESTUS_COOKIE is not set (or APITESTUS_SESSION + APITESTUS_USER)."
-    );
+  const session = (process.env.APITESTUS_SESSION ?? "").trim();
+  const userId = (process.env.APITESTUS_USER ?? "").trim();
+  if (!session) {
+    console.error("ERROR: APITESTUS_SESSION is not set.");
+    process.exit(1);
+  }
+  if (!userId) {
+    console.error("ERROR: APITESTUS_USER is not set.");
     process.exit(1);
   }
 
-  const userId = userIdFromEnv || parseCookieValue(cookieHeader, "new-api-user");
-  if (!userId) {
-    console.error(
-      "ERROR: APITESTUS_USER is not set and cookie does not contain new-api-user."
-    );
+  const cookieHeader = buildCookieHeader({ session, userId });
+  if (!cookieHeader) {
+    console.error("ERROR: Failed to build session cookie from APITESTUS_SESSION/APITESTUS_USER.");
     process.exit(1);
   }
 
   console.log("=== api-test.us Check-in ===");
   console.log(`Time: ${new Date().toISOString()}`);
   console.log(`User: ${userId}`);
+  const accessToken = resolveAccessToken(process.env.APITESTUS_ACCESS_TOKEN);
+  console.log(`Auth: ${accessToken ? "session + access-token" : "session only"}`);
+
+  const headers: Record<string, string> = {
+    Accept: "application/json, text/plain, */*",
+    "Cache-Control": "no-store",
+    Referer: REFERER_URL,
+    "User-Agent":
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
+    Cookie: cookieHeader,
+    "New-API-User": userId,
+  };
+  if (accessToken) {
+    headers.Authorization = `Bearer ${accessToken}`;
+    headers["access-token"] = accessToken;
+  }
 
   const checkinRes = await fetch(CHECKIN_URL, {
     method: "POST",
-    headers: {
-      Accept: "application/json, text/plain, */*",
-      "Cache-Control": "no-store",
-      Referer: REFERER_URL,
-      "User-Agent":
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
-      Cookie: cookieHeader,
-      "New-API-User": userId,
-    },
+    headers,
   });
 
   const checkinText = await checkinRes.text();
@@ -143,9 +156,18 @@ async function checkin(): Promise<void> {
   let failed = false;
 
   if (!checkinRes.ok) {
-    title = `api-test.us签到失败: HTTP ${checkinRes.status}`;
+    const isUnauthorized = checkinRes.status === 401;
+    title = isUnauthorized
+      ? "api-test.us签到失败: 凭证失效(401)"
+      : `api-test.us签到失败: HTTP ${checkinRes.status}`;
     contentLines.push(`Check-in HTTP: ${checkinRes.status}`);
     contentLines.push(checkinText);
+    if (isUnauthorized) {
+      contentLines.push("");
+      contentLines.push(
+        "Hint: 401 indicates auth is invalid. Refresh APITESTUS_SESSION or set APITESTUS_ACCESS_TOKEN."
+      );
+    }
     failed = true;
   } else {
     try {
@@ -196,7 +218,7 @@ async function checkin(): Promise<void> {
 
   let selfInfo: SelfResult | null = null;
   try {
-    selfInfo = await fetchSelf(cookieHeader, userId);
+    selfInfo = await fetchSelf(cookieHeader, userId, accessToken);
   } catch (err) {
     selfInfo = { status: 0, text: (err as Error).message, data: null };
   }

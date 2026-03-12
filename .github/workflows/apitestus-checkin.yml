@@ -25,10 +25,10 @@ jobs:
 
       - name: Run Check-in
         env:
-          # Option A (recommended): full cookie string: "session=...; new-api-user=6191"
-          APITESTUS_COOKIE: ${{ secrets.APITESTUS_COOKIE }}
-          # Option B: split secrets (only used when APITESTUS_COOKIE is empty)
+          # Required: session + user id
           APITESTUS_SESSION: ${{ secrets.APITESTUS_SESSION }}
           APITESTUS_USER: ${{ secrets.APITESTUS_USER }}
+          # Optional: explicit access token for APIs requiring Bearer auth
+          APITESTUS_ACCESS_TOKEN: ${{ secrets.APITESTUS_ACCESS_TOKEN }}
           PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
         run: npx tsx apitestus-checkin.ts
