@@ -35,16 +35,12 @@ interface SelfResult {
   data: SelfResponseData | null;
 }
 
-function buildCookieHeader(session: string, userId: string): string {
+function buildCookieHeader(session: string): string {
   const sessionValue = session.startsWith("session=")
     ? session.slice("session=".length)
     : session;
-  const userValue = userId.startsWith("new-api-user=")
-    ? userId.slice("new-api-user=".length)
-    : userId;
-
   if (!sessionValue) return "";
-  return `session=${sessionValue}; new-api-user=${userValue}`;
+  return `session=${sessionValue}`;
 }
 
 function formatNumber(n: number): string {
@@ -112,7 +108,7 @@ async function checkin(): Promise<void> {
   }
 
   const session = (process.env.ZENSCALEAI_SESSION ?? "").trim();
-  const cookieHeader = session ? buildCookieHeader(session, userId) : "";
+  const cookieHeader = session ? buildCookieHeader(session) : "";
   const accessToken = normalizeAccessToken(process.env.ZENSCALEAI_ACCESS_TOKEN ?? "");
 
   console.log("=== ZenScaleAI Check-in ===");
