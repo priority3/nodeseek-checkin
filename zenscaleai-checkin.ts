@@ -55,7 +55,18 @@ function quotaToUsd(quota: number): string {
   return (quota / QUOTA_PER_USD).toFixed(6);
 }
 
-function buildHeaders(userId: string, cookieHeader: string): Record<string, string> {
+function normalizeAccessToken(token: string): string {
+  const trimmed = token.trim().replace(/^"+|"+$/g, "");
+  if (!trimmed) return "";
+  if (/^bearer\s+/i.test(trimmed)) return trimmed.replace(/^bearer\s+/i, "").trim();
+  return trimmed;
+}
+
+function buildHeaders(
+  userId: string,
+  cookieHeader: string,
+  accessToken: string
+): Record<string, string> {
   const headers: Record<string, string> = {
     Accept: "application/json, text/plain, */*",
     "Cache-Control": "no-store",
@@ -67,14 +78,19 @@ function buildHeaders(userId: string, cookieHeader: string): Record<string, stri
   if (cookieHeader) {
     headers.Cookie = cookieHeader;
   }
+  if (accessToken) {
+    headers.Authorization = `Bearer ${accessToken}`;
+    headers["access-token"] = accessToken;
+  }
   return headers;
 }
 
 async function fetchSelf(
   userId: string,
-  cookieHeader: string
+  cookieHeader: string,
+  accessToken: string
 ): Promise<SelfResult> {
-  const headers = buildHeaders(userId, cookieHeader);
+  const headers = buildHeaders(userId, cookieHeader, accessToken);
   headers.Referer = CONSOLE_URL;
 
   const res = await fetch(SELF_URL, { headers });
@@ -95,17 +111,21 @@ async function checkin(): Promise<void> {
     process.exit(1);
   }
 
-  // Reason: session cookie is optional for this platform;
-  // some endpoints only require the New-API-User header
   const session = (process.env.ZENSCALEAI_SESSION ?? "").trim();
   const cookieHeader = session ? buildCookieHeader(session, userId) : "";
+  const accessToken = normalizeAccessToken(process.env.ZENSCALEAI_ACCESS_TOKEN ?? "");
 
   console.log("=== ZenScaleAI Check-in ===");
   console.log(`Time: ${new Date().toISOString()}`);
   console.log(`User: ${userId}`);
-  console.log(`Auth: ${cookieHeader ? "session + header" : "header only"}`);
+  const authParts = [
+    cookieHeader ? "session" : "",
+    accessToken ? "access-token" : "",
+    "header",
+  ].filter(Boolean);
+  console.log(`Auth: ${authParts.join(" + ")}`);
 
-  const headers = buildHeaders(userId, cookieHeader);
+  const headers = buildHeaders(userId, cookieHeader, accessToken);
   const checkinRes = await fetch(CHECKIN_URL, {
     method: "POST",
     headers,
@@ -182,7 +202,7 @@ async function checkin(): Promise<void> {
   // Fetch balance info
   let selfInfo: SelfResult | null = null;
   try {
-    selfInfo = await fetchSelf(userId, cookieHeader);
+    selfInfo = await fetchSelf(userId, cookieHeader, accessToken);
   } catch (err) {
     selfInfo = { status: 0, text: (err as Error).message, data: null };
   }

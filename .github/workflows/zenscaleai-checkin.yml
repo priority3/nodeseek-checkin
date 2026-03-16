@@ -27,7 +27,9 @@ jobs:
         env:
           # Required: user id (New-API-User header value)
           ZENSCALEAI_USER: ${{ secrets.ZENSCALEAI_USER }}
-          # Optional: session cookie for endpoints that require it
+          # Optional: session cookie
           ZENSCALEAI_SESSION: ${{ secrets.ZENSCALEAI_SESSION }}
+          # Optional: access token for APIs requiring Bearer auth
+          ZENSCALEAI_ACCESS_TOKEN: ${{ secrets.ZENSCALEAI_ACCESS_TOKEN }}
           PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
         run: npx tsx zenscaleai-checkin.ts
