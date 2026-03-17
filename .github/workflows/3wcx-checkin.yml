@@ -19,8 +19,6 @@ jobs:
           node-version: "20"
 
       - name: Install dependencies
-        env:
-          PUPPETEER_SKIP_DOWNLOAD: "1"
         run: npm ci
 
       - name: Run Check-in
