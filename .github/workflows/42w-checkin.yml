@@ -19,12 +19,11 @@ jobs:
           node-version: "20"
 
       - name: Install dependencies
-        env:
-          PUPPETEER_SKIP_DOWNLOAD: "1"
         run: npm ci
 
       - name: Run Check-in
         env:
           W42_USER: ${{ secrets.W42_USER }}
+          W42_COOKIE: ${{ secrets.W42_COOKIE }}
           PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
         run: npx tsx 42w-checkin.ts
