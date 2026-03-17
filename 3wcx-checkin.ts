@@ -43,8 +43,12 @@ function quotaToUsd(quota: number): string {
   return (quota / QUOTA_PER_USD).toFixed(6);
 }
 
-function buildHeaders(userId: string, referer: string): Record<string, string> {
-  return {
+function buildHeaders(
+  userId: string,
+  cookie: string,
+  referer: string
+): Record<string, string> {
+  const headers: Record<string, string> = {
     Accept: "application/json, text/plain, */*",
     "Cache-Control": "no-store",
     Referer: referer,
@@ -52,11 +56,13 @@ function buildHeaders(userId: string, referer: string): Record<string, string> {
       "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
     "New-API-User": userId,
   };
+  if (cookie) headers.Cookie = cookie;
+  return headers;
 }
 
-async function fetchSelf(userId: string): Promise<SelfResult> {
+async function fetchSelf(userId: string, cookie: string): Promise<SelfResult> {
   const res = await fetch(SELF_URL, {
-    headers: buildHeaders(userId, CONSOLE_URL),
+    headers: buildHeaders(userId, cookie, CONSOLE_URL),
   });
 
   const text = await res.text();
@@ -76,13 +82,19 @@ async function checkin(): Promise<void> {
     process.exit(1);
   }
 
+  const cookie = (process.env.THREEWCX_COOKIE ?? "").trim();
+  if (!cookie) {
+    console.error("ERROR: THREEWCX_COOKIE is not set.");
+    process.exit(1);
+  }
+
   console.log("=== 3w.cx Check-in ===");
   console.log(`Time: ${new Date().toISOString()}`);
   console.log(`User: ${userId}`);
 
   const checkinRes = await fetch(CHECKIN_URL, {
     method: "POST",
-    headers: buildHeaders(userId, REFERER_URL),
+    headers: buildHeaders(userId, cookie, REFERER_URL),
   });
 
   const checkinText = await checkinRes.text();
@@ -147,7 +159,7 @@ async function checkin(): Promise<void> {
   // Fetch balance info
   let selfInfo: SelfResult | null = null;
   try {
-    selfInfo = await fetchSelf(userId);
+    selfInfo = await fetchSelf(userId, cookie);
   } catch (err) {
     selfInfo = { status: 0, text: (err as Error).message, data: null };
   }

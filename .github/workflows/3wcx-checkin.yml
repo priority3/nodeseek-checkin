@@ -26,5 +26,6 @@ jobs:
       - name: Run Check-in
         env:
           THREEWCX_USER: ${{ secrets.THREEWCX_USER }}
+          THREEWCX_COOKIE: ${{ secrets.THREEWCX_COOKIE }}
           PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
         run: npx tsx 3wcx-checkin.ts
