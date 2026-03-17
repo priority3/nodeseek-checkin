@@ -9,7 +9,11 @@ interface CheckinResponseData {
   message?: string;
   msg?: string;
   error?: string;
-  data?: unknown;
+  level?: number;
+  times?: number;
+  quota?: number;
+  label?: string;
+  new_balance?: number;
 }
 
 function normalizeToken(token: string): string {
@@ -51,51 +55,53 @@ async function checkin(): Promise<void> {
   const contentLines: string[] = [];
   let failed = false;
 
-  if (!checkinRes.ok) {
-    const isUnauthorized = checkinRes.status === 401;
-    title = isUnauthorized
-      ? "x666签到失败: 凭证失效(401)"
-      : `x666签到失败: HTTP ${checkinRes.status}`;
+  // Reason: this API returns JSON body even on 400 (e.g. "今日已签到"),
+  // so always try to parse the body before deciding success/failure
+  let data: CheckinResponseData | null = null;
+  try {
+    data = JSON.parse(checkinText) as CheckinResponseData;
+  } catch {
+    // non-JSON response
+  }
+
+  const rawMsg =
+    data?.message ?? data?.msg ?? data?.error ?? (typeof data === "string" ? data : "");
+  const checkinMessage = typeof rawMsg === "string" ? rawMsg : "";
+  const alreadyCheckedIn =
+    checkinMessage.includes("已签到") || checkinMessage.includes("already");
+
+  if (checkinRes.status === 401) {
+    title = "x666签到失败: 凭证失效(401)";
+    contentLines.push(`Check-in HTTP: 401`);
+    contentLines.push(checkinText);
+    contentLines.push("");
+    contentLines.push("Hint: 401 indicates token is invalid or expired. Refresh X666_TOKEN.");
+    failed = true;
+  } else if (data && alreadyCheckedIn) {
+    // Reason: "今日已签到" returns 400 + success:false, treat as soft success
+    title = `x666签到: ${checkinMessage}`;
+    contentLines.push(`Check-in: ${checkinMessage}`);
+    if (typeof data.new_balance === "number") {
+      contentLines.push(`Balance: ${data.new_balance}`);
+    }
+  } else if (data?.success) {
+    title = `x666签到成功${checkinMessage ? `: ${checkinMessage}` : ""}`;
+    contentLines.push(`Check-in: ${checkinMessage || "success"}`);
+    if (typeof data.quota === "number") contentLines.push(`Quota: ${data.quota}`);
+    if (typeof data.new_balance === "number") contentLines.push(`Balance: ${data.new_balance}`);
+    if (data.label) contentLines.push(`Label: ${data.label}`);
+    if (typeof data.times === "number") contentLines.push(`Times: ${data.times}`);
+    if (typeof data.level === "number") contentLines.push(`Level: ${data.level}`);
+  } else if (!checkinRes.ok) {
+    title = `x666签到失败: HTTP ${checkinRes.status}`;
     contentLines.push(`Check-in HTTP: ${checkinRes.status}`);
     contentLines.push(checkinText);
-    if (isUnauthorized) {
-      contentLines.push("");
-      contentLines.push("Hint: 401 indicates token is invalid or expired. Refresh X666_TOKEN.");
-    }
     failed = true;
   } else {
-    try {
-      const data = JSON.parse(checkinText) as CheckinResponseData;
-      const rawMsg =
-        data?.message ?? data?.msg ?? data?.error ?? (typeof data === "string" ? data : "");
-      const checkinMessage = typeof rawMsg === "string" ? rawMsg : "";
-
-      if (typeof data?.success === "boolean" && !data.success) {
-        // Reason: treat "已签到"/"already" as a soft success, not a real failure
-        const alreadyCheckedIn =
-          checkinMessage.includes("已签到") || checkinMessage.includes("already");
-        title = `x666签到: ${checkinMessage || "失败"}`;
-        contentLines.push(`Check-in: ${checkinMessage || "failed"}`);
-        contentLines.push(checkinText);
-        failed = !alreadyCheckedIn;
-      } else if (typeof data?.code === "number" && data.code !== 0) {
-        const alreadyCheckedIn =
-          checkinMessage.includes("已签到") || checkinMessage.includes("already");
-        title = `x666签到: ${checkinMessage || `code=${data.code}`}`;
-        contentLines.push(`Check-in: ${checkinMessage || `code=${data.code}`}`);
-        contentLines.push(checkinText);
-        failed = !alreadyCheckedIn;
-      } else {
-        title = `x666签到成功${checkinMessage ? `: ${checkinMessage}` : ""}`;
-        contentLines.push(`Check-in: ${checkinMessage || "success"}`);
-        if (data?.data) {
-          contentLines.push(`Data: ${JSON.stringify(data.data)}`);
-        }
-      }
-    } catch {
-      title = "x666签到成功";
-      contentLines.push("Check-in: success");
-      contentLines.push(checkinText);
+    title = `x666签到: ${checkinMessage || "未知响应"}`;
+    contentLines.push(`Check-in: ${checkinMessage || checkinText}`);
+    if (data && typeof data.success === "boolean" && !data.success) {
+      failed = true;
     }
   }
 
