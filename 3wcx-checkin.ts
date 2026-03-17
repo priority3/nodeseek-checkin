@@ -86,9 +86,9 @@ async function checkin(): Promise<void> {
   console.log(`Time: ${new Date().toISOString()}`);
   console.log(`User: ${userId}`);
 
-  const cookies = parseCookies(cookieStr, ".3w.cx");
+  const cookies = parseCookies(cookieStr, "aiapi.3w.cx");
   // Reason: New API platforms also require new-api-user as a cookie for session auth
-  cookies.push({ name: "new-api-user", value: userId, domain: ".3w.cx", path: "/" });
+  cookies.push({ name: "new-api-user", value: userId, domain: "aiapi.3w.cx", path: "/" });
   console.log(`Parsed ${cookies.length} cookies`);
 
   const browser = await puppeteer.launch({
