@@ -8,7 +8,8 @@
     "checkin:apitestus": "tsx apitestus-checkin.ts",
     "checkin:zenscaleai": "tsx zenscaleai-checkin.ts",
     "checkin:x666": "tsx x666-checkin.ts",
-    "checkin:42w": "tsx 42w-checkin.ts"
+    "checkin:42w": "tsx 42w-checkin.ts",
+    "checkin:clove": "tsx clove-checkin.ts"
   },
   "dependencies": {
     "puppeteer": "^24.2.0",
