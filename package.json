@@ -7,8 +7,7 @@
     "checkin:hotaru": "tsx hotaru-checkin.ts",
     "checkin:apitestus": "tsx apitestus-checkin.ts",
     "checkin:zenscaleai": "tsx zenscaleai-checkin.ts",
-    "checkin:x666": "tsx x666-checkin.ts",
-    "checkin:3wcx": "tsx 3wcx-checkin.ts"
+    "checkin:x666": "tsx x666-checkin.ts"
   },
   "dependencies": {
     "puppeteer": "^24.2.0",
