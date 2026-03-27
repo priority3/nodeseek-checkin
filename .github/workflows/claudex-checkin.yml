@@ -1,0 +1,30 @@
+name: Claudex Daily Check-in
+
+on:
+  schedule:
+    # UTC 时间每天 1:20 执行（即北京时间 9:20）
+    - cron: "20 1 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  checkin:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        env:
+          PUPPETEER_SKIP_DOWNLOAD: "1"
+        run: npm ci
+
+      - name: Run Check-in
+        env:
+          CLAUDEX_COOKIE: ${{ secrets.CLAUDEX_COOKIE }}
+          PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
+        run: npx tsx claudex-checkin.ts
