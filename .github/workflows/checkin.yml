@@ -36,10 +36,10 @@ jobs:
           find "$workdir" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
           tar -xzf "$archive" -C "$workdir" --strip-components=1
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
+      - name: Verify Node.js runtime
+        run: |
+          node -v
+          npm -v
 
       - name: Install dependencies
         run: npm ci
