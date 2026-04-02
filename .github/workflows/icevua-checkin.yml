@@ -1,12 +1,13 @@
 name: ice.v.ua Daily Check-in
 
 on:
+  schedule:
+    # UTC 时间每天 1:10 执行（即北京时间 9:10）
+    - cron: "10 1 * * *"
   workflow_dispatch: {}
 
 jobs:
   checkin:
-    # 临时暂停 CI 签到；恢复时删除此 if 条件即可。
-    if: ${{ false }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
