@@ -17,6 +17,7 @@ const RETRY_DELAY_MS = 5000;
 const MAX_ATTEMPTS = 2;
 const NAV_TIMEOUT_MS = 60000;
 const PUSHPLUS_TITLE_MAX_LEN = 96;
+const DEFAULT_USER_DATA_DIR = "/tmp/nodeseek-browser-profile";
 
 interface CookieParam {
   name: string;
@@ -154,6 +155,7 @@ async function waitForCloudflareClear(page: Page): Promise<ChallengeState> {
 async function runCheckinAttempt(cookies: CookieParam[]): Promise<CheckinResult> {
   const runHeadful = isTruthyEnv(process.env.NS_HEADFUL);
   const proxyServer = (process.env.NS_PROXY_SERVER ?? "").trim();
+  const userDataDir = (process.env.NS_USER_DATA_DIR ?? "").trim() || DEFAULT_USER_DATA_DIR;
   const launchArgs = [
     "--no-sandbox",
     "--disable-setuid-sandbox",
@@ -167,9 +169,11 @@ async function runCheckinAttempt(cookies: CookieParam[]): Promise<CheckinResult>
     launchArgs.push(`--proxy-server=${proxyServer}`);
   }
 
+  console.log(`Using browser profile: ${userDataDir}`);
   const browser = await puppeteer.launch({
     headless: runHeadful ? false : true,
     args: launchArgs,
+    userDataDir,
   });
 
   try {
