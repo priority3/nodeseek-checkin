@@ -14,8 +14,27 @@ jobs:
       - X64
       - nodeseek
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Download repository archive
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          workdir="$GITHUB_WORKSPACE"
+          tmpdir="$(mktemp -d)"
+          archive="$tmpdir/repo.tar.gz"
+          trap 'rm -rf "$tmpdir"' EXIT
+
+          # Reason: 这台阿里云 ECS 对 git fetch github.com 很慢，直接下载归档包更稳定。
+          curl -fsSL \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/tarball/${GITHUB_SHA}" \
+            -o "$archive"
+
+          mkdir -p "$workdir"
+          find "$workdir" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+          tar -xzf "$archive" -C "$workdir" --strip-components=1
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
