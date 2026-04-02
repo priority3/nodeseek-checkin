@@ -15,6 +15,7 @@ const CF_RELOAD_AFTER_MS = 18000;
 const RETRY_DELAY_MS = 5000;
 const MAX_ATTEMPTS = 2;
 const NAV_TIMEOUT_MS = 60000;
+const PUSHPLUS_TITLE_MAX_LEN = 96;
 
 interface CookieParam {
   name: string;
@@ -67,6 +68,10 @@ function parseCookies(cookieStr: string): CookieParam[] {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isTruthyEnv(value: string | undefined): boolean {
+  return /^(1|true|yes|on)$/i.test((value ?? "").trim());
 }
 
 function includesChallengeText(text: string): boolean {
@@ -135,8 +140,9 @@ async function waitForCloudflareClear(page: Page): Promise<void> {
 }
 
 async function runCheckinAttempt(cookies: CookieParam[]): Promise<CheckinResult> {
+  const runHeadful = isTruthyEnv(process.env.NS_HEADFUL);
   const browser = await puppeteer.launch({
-    headless: true,
+    headless: runHeadful ? false : true,
     args: [
       "--no-sandbox",
       "--disable-setuid-sandbox",
@@ -276,9 +282,14 @@ function notify(title: string, content: string): Promise<void> {
     return Promise.resolve();
   }
 
+  const safeTitle =
+    title.length > PUSHPLUS_TITLE_MAX_LEN
+      ? `${title.slice(0, PUSHPLUS_TITLE_MAX_LEN - 1)}...`
+      : title;
+
   const payload = JSON.stringify({
     token,
-    title,
+    title: safeTitle,
     content: content || title,
     template: "txt",
   });
