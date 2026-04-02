@@ -1,13 +1,18 @@
 name: NodeSeek Daily Check-in
 
 on:
+  schedule:
+    # UTC 时间每天 0:30 执行（即北京时间 8:30）
+    - cron: '30 0 * * *'
   workflow_dispatch: # 支持手动触发
 
 jobs:
   checkin:
-    # 临时暂停 CI 签到；恢复时删除此 if 条件即可。
-    if: ${{ false }}
-    runs-on: ubuntu-latest
+    runs-on:
+      - self-hosted
+      - Linux
+      - X64
+      - nodeseek
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -22,9 +27,28 @@ jobs:
 
       - name: Ensure Xvfb is available
         run: |
-          if ! command -v xvfb-run >/dev/null 2>&1; then
-            sudo apt-get update
-            sudo apt-get install -y xvfb
+          run_cmd() {
+            if command -v sudo >/dev/null 2>&1 && [ "$(id -u)" -ne 0 ]; then
+              sudo "$@"
+            else
+              "$@"
+            fi
+          }
+
+          if command -v xvfb-run >/dev/null 2>&1; then
+            exit 0
+          fi
+
+          if command -v apt-get >/dev/null 2>&1; then
+            run_cmd apt-get update
+            run_cmd apt-get install -y xvfb
+          elif command -v dnf >/dev/null 2>&1; then
+            run_cmd dnf install -y xorg-x11-server-Xvfb
+          elif command -v yum >/dev/null 2>&1; then
+            run_cmd yum install -y xorg-x11-server-Xvfb
+          else
+            echo "xvfb-run is required but no supported package manager was found." >&2
+            exit 1
           fi
 
       - name: Run Check-in
