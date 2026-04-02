@@ -1,13 +1,12 @@
 name: api-test.us Daily Check-in
 
 on:
-  schedule:
-    # UTC 时间每天 0:50 执行（即北京时间 8:50）
-    - cron: "50 0 * * *"
   workflow_dispatch: {}
 
 jobs:
   checkin:
+    # 临时暂停 CI 签到；恢复时删除此 if 条件即可。
+    if: ${{ false }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
