@@ -12,6 +12,7 @@ const PUSHPLUS_API = "https://www.pushplus.plus/send";
 const CF_MAX_WAIT_MS = 45000;
 const CF_POLL_INTERVAL_MS = 3000;
 const CF_RELOAD_AFTER_MS = 18000;
+const CF_PROCEED_WITH_CLEARANCE_AFTER_MS = 21000;
 const RETRY_DELAY_MS = 5000;
 const MAX_ATTEMPTS = 2;
 const NAV_TIMEOUT_MS = 60000;
@@ -102,7 +103,7 @@ async function getChallengeState(page: Page): Promise<ChallengeState> {
   };
 }
 
-async function waitForCloudflareClear(page: Page): Promise<void> {
+async function waitForCloudflareClear(page: Page): Promise<ChallengeState> {
   const startTime = Date.now();
   let reloaded = false;
 
@@ -114,10 +115,21 @@ async function waitForCloudflareClear(page: Page): Promise<void> {
 
     const combinedText = `${state.title}\n${state.bodySnippet}\n${state.url}`;
     if (!includesChallengeText(combinedText)) {
-      return;
+      return state;
     }
 
     const elapsedMs = Date.now() - startTime;
+    if (
+      reloaded &&
+      state.hasCfClearance &&
+      elapsedMs >= CF_PROCEED_WITH_CLEARANCE_AFTER_MS
+    ) {
+      console.log(
+        "Cloudflare challenge page is still visible, but cf_clearance exists after reload; proceeding to API request."
+      );
+      return state;
+    }
+
     if (!reloaded && elapsedMs >= CF_RELOAD_AFTER_MS) {
       console.log("Cloudflare challenge still active, reloading page once...");
       await page.reload({
@@ -177,8 +189,10 @@ async function runCheckinAttempt(cookies: CookieParam[]): Promise<CheckinResult>
 
     // Reason: Cloudflare managed challenge 的耗时不稳定，改为轮询等待并在超时前重载一次
     console.log(`Waiting up to ${CF_MAX_WAIT_MS / 1000}s for Cloudflare to clear...`);
-    await waitForCloudflareClear(page);
-    console.log(`Page title after challenge: ${await page.title()}`);
+    const challengeState = await waitForCloudflareClear(page);
+    console.log(
+      `Page state before API request: title="${challengeState.title}" cf_clearance=${challengeState.hasCfClearance} url=${challengeState.url}`
+    );
 
     // Reason: 在已通过 Cloudflare 验证的浏览器上下文中发起 fetch，
     // 这样请求会自动携带 cf_clearance cookie 和正确的浏览器指纹
