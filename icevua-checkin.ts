@@ -7,6 +7,7 @@ import { promisify } from "util";
 
 const BASE_URL = "https://signv.ice.v.ua";
 const CHECKIN_URL = `${BASE_URL}/checkin?next=/embed`;
+const EMBED_URL = `${BASE_URL}/embed`;
 const DEFAULT_REFERER_URL = `${BASE_URL}/embed`;
 const PUSHPLUS_API = "https://www.pushplus.plus/send";
 const PUSHPLUS_TITLE_MAX_LEN = 96;
@@ -272,7 +273,7 @@ async function runCheckinCurl(cookieHeader: string, referer: string): Promise<Cu
 
 async function fetchEmbedStatus(cookieHeader: string, referer: string): Promise<EmbedStatus> {
   const response = await runCurl([
-    referer,
+    EMBED_URL,
     "-H",
     "sec-fetch-dest: iframe",
     "-H",
