@@ -1,14 +1,38 @@
+import { execFile } from "child_process";
+import { mkdtemp, readFile, rm } from "fs/promises";
 import https from "https";
+import os from "os";
+import path from "path";
+import { promisify } from "util";
 
 const BASE_URL = "https://signv.ice.v.ua";
 const CHECKIN_URL = `${BASE_URL}/checkin?next=/embed`;
 const DEFAULT_REFERER_URL = `${BASE_URL}/embed`;
 const PUSHPLUS_API = "https://www.pushplus.plus/send";
 const PUSHPLUS_TITLE_MAX_LEN = 96;
+const CURL_USER_AGENT =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
+  "(KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36";
+
+const execFileAsync = promisify(execFile);
 
 interface ParsedResponse {
   summary: string;
   bodySnippet: string;
+}
+
+interface CurlResponse {
+  status: number;
+  headers: Record<string, string>;
+  body: string;
+}
+
+interface EmbedStatus {
+  ok: boolean;
+  title: string;
+  summary: string;
+  bodySnippet: string;
+  alreadyCheckedIn: boolean;
 }
 
 function normalizeSession(raw: string): string {
@@ -131,6 +155,146 @@ function shortenTitle(title: string): string {
     : title;
 }
 
+function parseHeaderBlocks(rawHeaders: string): CurlResponse["headers"][] {
+  const normalized = rawHeaders.replace(/\r\n/g, "\n");
+  const blocks = normalized
+    .split(/\n\n+/)
+    .map((block) => block.trim())
+    .filter((block) => block.startsWith("HTTP/"));
+
+  return blocks.map((block) => {
+    const lines = block.split("\n").filter(Boolean);
+    const headers: Record<string, string> = {};
+    for (const line of lines.slice(1)) {
+      const idx = line.indexOf(":");
+      if (idx === -1) continue;
+      const key = line.slice(0, idx).trim().toLowerCase();
+      const value = line.slice(idx + 1).trim();
+      headers[key] = value;
+    }
+    return headers;
+  });
+}
+
+function parseStatus(rawHeaders: string): number {
+  const normalized = rawHeaders.replace(/\r\n/g, "\n");
+  const lines = normalized
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => /^HTTP\/\d(?:\.\d)? \d{3}\b/.test(line));
+
+  const last = lines[lines.length - 1] ?? "";
+  const match = last.match(/^HTTP\/\d(?:\.\d)? (\d{3})\b/);
+  return match ? Number(match[1]) : 0;
+}
+
+async function runCurl(args: string[]): Promise<CurlResponse> {
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "icevua-"));
+  const headersPath = path.join(tempDir, "headers.txt");
+  const bodyPath = path.join(tempDir, "body.txt");
+
+  try {
+    await execFileAsync("curl", ["-sS", "-D", headersPath, "-o", bodyPath, ...args], {
+      maxBuffer: 10 * 1024 * 1024,
+    });
+  } catch (error) {
+    await rm(tempDir, { recursive: true, force: true });
+    throw error;
+  }
+
+  try {
+    const [rawHeaders, body] = await Promise.all([
+      readFile(headersPath, "utf8"),
+      readFile(bodyPath, "utf8"),
+    ]);
+    const headerBlocks = parseHeaderBlocks(rawHeaders);
+    return {
+      status: parseStatus(rawHeaders),
+      headers: headerBlocks[headerBlocks.length - 1] ?? {},
+      body,
+    };
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+}
+
+function buildBaseCurlHeaders(cookieHeader: string, referer: string): string[] {
+  return [
+    "-H",
+    "accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+    "-H",
+    "accept-language: en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7",
+    "-H",
+    "cache-control: no-cache",
+    "-H",
+    "pragma: no-cache",
+    "-H",
+    "priority: u=0, i",
+    "-H",
+    `referer: ${referer}`,
+    "-H",
+    'sec-ch-ua: "Not-A.Brand";v="24", "Chromium";v="146"',
+    "-H",
+    "sec-ch-ua-mobile: ?0",
+    "-H",
+    'sec-ch-ua-platform: "macOS"',
+    "-H",
+    "upgrade-insecure-requests: 1",
+    "-H",
+    `user-agent: ${CURL_USER_AGENT}`,
+    "-b",
+    cookieHeader,
+  ];
+}
+
+async function runCheckinCurl(cookieHeader: string, referer: string): Promise<CurlResponse> {
+  return runCurl([
+    CHECKIN_URL,
+    "-X",
+    "POST",
+    "-H",
+    "content-length: 0",
+    "-H",
+    "content-type: application/x-www-form-urlencoded",
+    "-H",
+    `origin: ${BASE_URL}`,
+    "-H",
+    "sec-fetch-dest: iframe",
+    "-H",
+    "sec-fetch-mode: navigate",
+    "-H",
+    "sec-fetch-site: same-origin",
+    "-H",
+    "sec-fetch-user: ?1",
+    ...buildBaseCurlHeaders(cookieHeader, referer),
+  ]);
+}
+
+async function fetchEmbedStatus(cookieHeader: string, referer: string): Promise<EmbedStatus> {
+  const response = await runCurl([
+    referer,
+    "-H",
+    "sec-fetch-dest: iframe",
+    "-H",
+    "sec-fetch-mode: navigate",
+    "-H",
+    "sec-fetch-site: same-origin",
+    ...buildBaseCurlHeaders(cookieHeader, referer),
+  ]);
+
+  const title = extractHtmlTitle(response.body);
+  const plainText = stripHtml(response.body);
+  const summary = cleanText(title || plainText.slice(0, 200));
+
+  return {
+    ok: response.status >= 200 && response.status < 300,
+    title,
+    summary,
+    bodySnippet: cleanText(plainText.slice(0, 500)),
+    alreadyCheckedIn: plainText.includes("今日已签到") || isAlreadyCheckedIn(plainText),
+  };
+}
+
 async function checkin(): Promise<void> {
   const cookieHeader = buildCookieHeader();
   if (!cookieHeader) {
@@ -145,37 +309,24 @@ async function checkin(): Promise<void> {
   console.log(`Auth: ${process.env.ICEVUA_COOKIE ? "cookie" : "session"}`);
   console.log(`Referer: ${referer}`);
 
-  const res = await fetch(CHECKIN_URL, {
-    method: "POST",
-    redirect: "manual",
-    headers: {
-      Accept:
-        "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-      "Accept-Language": "en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7",
-      "Cache-Control": "no-cache",
-      "Content-Type": "application/x-www-form-urlencoded",
-      Cookie: cookieHeader,
-      Origin: BASE_URL,
-      Pragma: "no-cache",
-      Priority: "u=0, i",
-      Referer: referer,
-      "Sec-CH-UA": '"Not-A.Brand";v="24", "Chromium";v="146"',
-      "Sec-CH-UA-Mobile": "?0",
-      "Sec-CH-UA-Platform": '"macOS"',
-      "Sec-Fetch-Dest": "iframe",
-      "Sec-Fetch-Mode": "navigate",
-      "Sec-Fetch-Site": "same-origin",
-      "Sec-Fetch-User": "?1",
-      "Upgrade-Insecure-Requests": "1",
-      "User-Agent":
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
-    },
-    body: "",
-  });
+  const initialEmbed = await fetchEmbedStatus(cookieHeader, referer);
+  if (initialEmbed.ok && initialEmbed.alreadyCheckedIn) {
+    const title = `ice.v.ua签到: 今日已签到`;
+    const contentLines = [
+      "Check-in: already checked in",
+      initialEmbed.summary,
+      initialEmbed.bodySnippet,
+    ].filter(Boolean);
 
-  const responseText = await res.text();
-  const location = res.headers.get("location") ?? "";
-  const contentType = res.headers.get("content-type") ?? "";
+    console.log(`Notify title: ${title}`);
+    await notify(shortenTitle(title), contentLines.join("\n"));
+    return;
+  }
+
+  const res = await runCheckinCurl(cookieHeader, referer);
+  const responseText = res.body;
+  const location = res.headers.location ?? "";
+  const contentType = res.headers["content-type"] ?? "";
   const parsed = parseResponse(responseText, contentType);
 
   console.log(`HTTP Status: ${res.status}`);
@@ -189,9 +340,20 @@ async function checkin(): Promise<void> {
   const contentLines: string[] = [];
   let failed = false;
 
+  let embedFallback: EmbedStatus | null = null;
+  if (res.status >= 400) {
+    try {
+      embedFallback = await fetchEmbedStatus(cookieHeader, referer);
+    } catch {
+      embedFallback = null;
+    }
+  }
+
   if (res.status === 401 || res.status === 403 || isLoginRedirect(location) || isAuthFailureText(signalText)) {
     title = `ice.v.ua签到失败: 凭证失效${res.status ? ` (HTTP ${res.status})` : ""}`;
     failed = true;
+  } else if (embedFallback?.alreadyCheckedIn) {
+    title = "ice.v.ua签到: 今日已签到";
   } else if (isAlreadyCheckedIn(signalText)) {
     title = `ice.v.ua签到: ${parsed.summary || "今日已签到"}`;
   } else if ((res.status >= 200 && res.status < 400) || isSuccessLike(signalText)) {
@@ -205,6 +367,12 @@ async function checkin(): Promise<void> {
   if (location) contentLines.push(`Location: ${location}`);
   if (parsed.summary) contentLines.push(`Summary: ${parsed.summary}`);
   if (parsed.bodySnippet) contentLines.push(parsed.bodySnippet);
+  if (embedFallback) {
+    contentLines.push("");
+    contentLines.push(`Embed HTTP: ${embedFallback.ok ? 200 : "non-200"}`);
+    if (embedFallback.summary) contentLines.push(`Embed Summary: ${embedFallback.summary}`);
+    if (embedFallback.bodySnippet) contentLines.push(embedFallback.bodySnippet);
+  }
 
   console.log(`Notify title: ${title}`);
   await notify(shortenTitle(title), contentLines.join("\n"));
