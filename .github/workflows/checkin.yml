@@ -1,13 +1,12 @@
 name: NodeSeek Daily Check-in
 
 on:
-  schedule:
-    # UTC 时间每天 0:30 执行（即北京时间 8:30）
-    - cron: '30 0 * * *'
   workflow_dispatch: # 支持手动触发
 
 jobs:
   checkin:
+    # 临时暂停 CI 签到；恢复时删除此 if 条件即可。
+    if: ${{ false }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
