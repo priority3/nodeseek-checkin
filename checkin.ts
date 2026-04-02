@@ -141,15 +141,23 @@ async function waitForCloudflareClear(page: Page): Promise<void> {
 
 async function runCheckinAttempt(cookies: CookieParam[]): Promise<CheckinResult> {
   const runHeadful = isTruthyEnv(process.env.NS_HEADFUL);
+  const proxyServer = (process.env.NS_PROXY_SERVER ?? "").trim();
+  const launchArgs = [
+    "--no-sandbox",
+    "--disable-setuid-sandbox",
+    "--disable-dev-shm-usage",
+    "--disable-blink-features=AutomationControlled",
+    "--window-size=1365,900",
+  ];
+
+  if (proxyServer) {
+    console.log(`Using browser proxy: ${proxyServer}`);
+    launchArgs.push(`--proxy-server=${proxyServer}`);
+  }
+
   const browser = await puppeteer.launch({
     headless: runHeadful ? false : true,
-    args: [
-      "--no-sandbox",
-      "--disable-setuid-sandbox",
-      "--disable-dev-shm-usage",
-      "--disable-blink-features=AutomationControlled",
-      "--window-size=1365,900",
-    ],
+    args: launchArgs,
   });
 
   try {

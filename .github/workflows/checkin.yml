@@ -75,4 +75,5 @@ jobs:
           NS_COOKIE: ${{ secrets.NS_COOKIE }}
           PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
           NS_HEADFUL: '1'
+          NS_PROXY_SERVER: 'http://127.0.0.1:7890'
         run: xvfb-run -a npx tsx checkin.ts
