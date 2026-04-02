@@ -27,6 +27,5 @@ jobs:
         env:
           ICEVUA_COOKIE: ${{ secrets.ICEVUA_COOKIE }}
           ICEVUA_SESSION: ${{ secrets.ICEVUA_SESSION }}
-          ICEVUA_REFERER: ${{ secrets.ICEVUA_REFERER }}
           PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
         run: npx tsx icevua-checkin.ts
