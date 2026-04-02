@@ -1,0 +1,31 @@
+name: ice.v.ua Daily Check-in
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  checkin:
+    # 临时暂停 CI 签到；恢复时删除此 if 条件即可。
+    if: ${{ false }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        env:
+          PUPPETEER_SKIP_DOWNLOAD: "1"
+        run: npm ci
+
+      - name: Run Check-in
+        env:
+          ICEVUA_COOKIE: ${{ secrets.ICEVUA_COOKIE }}
+          ICEVUA_SESSION: ${{ secrets.ICEVUA_SESSION }}
+          ICEVUA_REFERER: ${{ secrets.ICEVUA_REFERER }}
+          PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
+        run: npx tsx icevua-checkin.ts
