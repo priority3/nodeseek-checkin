@@ -1,0 +1,35 @@
+name: Xcode.best Daily Check-in
+
+on:
+  workflow_dispatch: {}
+  schedule:
+    # Runs daily at 08:15 Asia/Shanghai (00:15 UTC)
+    - cron: "15 0 * * *"
+
+jobs:
+  checkin:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        env:
+          # This workflow does not run Puppeteer; skipping Chromium download makes it much faster.
+          PUPPETEER_SKIP_DOWNLOAD: "1"
+        run: npm ci
+
+      - name: Run Check-in
+        env:
+          XCODEBEST_USER: ${{ secrets.XCODEBEST_USER }}
+          # Recommended: full cookie string with cf_clearance + session
+          XCODEBEST_COOKIE: ${{ secrets.XCODEBEST_COOKIE }}
+          # Optional fallback when XCODEBEST_COOKIE is empty
+          XCODEBEST_SESSION: ${{ secrets.XCODEBEST_SESSION }}
+          PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
+        run: npx tsx xcodebest-checkin.ts
