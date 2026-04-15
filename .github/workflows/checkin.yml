@@ -71,4 +71,12 @@ jobs:
           NS_COOKIE: ${{ secrets.NS_COOKIE }}
           PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
           NS_HEADFUL: '1'
+          NS_USER_DATA_DIR: '/tmp/nodeseek-browser-profile'
         run: xvfb-run -a npx tsx checkin.ts
+
+      - name: Dump Browser Profile On Failure
+        if: ${{ failure() }}
+        run: |
+          echo "=== Browser profile tree ==="
+          ls -la /tmp || true
+          ls -la /tmp/nodeseek-browser-profile || true
