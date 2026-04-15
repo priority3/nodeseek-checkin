@@ -8,11 +8,7 @@ on:
 
 jobs:
   checkin:
-    runs-on:
-      - self-hosted
-      - Linux
-      - X64
-      - nodeseek
+    runs-on: ubuntu-latest
     steps:
       - name: Download repository archive
         env:
