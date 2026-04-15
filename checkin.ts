@@ -63,6 +63,9 @@ function parseCookies(cookieStr: string): CookieParam[] {
       const name = c.substring(0, idx).trim();
       const value = c.substring(idx + 1).trim();
       if (!name) return null;
+      // Reason: 旧的 cf_clearance 很容易过期，直接注入浏览器会让 Cloudflare 持续卡在挑战页。
+      // 让浏览器在当前会话里重新拿一张新的 clearance 更稳定。
+      if (name === "cf_clearance") return null;
       return { name, value, domain: ".nodeseek.com", path: "/" };
     })
     .filter((c): c is CookieParam => c !== null);
@@ -135,16 +138,6 @@ async function waitForCloudflareClear(page: Page): Promise<ChallengeState> {
     }
 
     const elapsedMs = Date.now() - startTime;
-    if (
-      reloaded &&
-      state.hasCfClearance &&
-      elapsedMs >= CF_PROCEED_WITH_CLEARANCE_AFTER_MS
-    ) {
-      console.log(
-        "Cloudflare challenge page is still visible, but cf_clearance exists after reload; proceeding to API request."
-      );
-      return state;
-    }
 
     if (!reloaded && elapsedMs >= CF_RELOAD_AFTER_MS) {
       console.log("Cloudflare challenge still active, reloading page once...");
@@ -162,7 +155,7 @@ async function waitForCloudflareClear(page: Page): Promise<ChallengeState> {
   const finalState = await getChallengeState(page);
   throw new Error(
     `Cloudflare challenge did not clear within ${CF_MAX_WAIT_MS / 1000}s ` +
-      `(title="${finalState.title}", cf_clearance=${finalState.hasCfClearance}, url=${finalState.url}, ` +
+      `(title="${finalState.title}", cf_clearance=${finalState.hasCfClearance}, elapsed=${Date.now() - startTime}ms, url=${finalState.url}, ` +
       `snippet="${finalState.bodySnippet}")`
   );
 }
