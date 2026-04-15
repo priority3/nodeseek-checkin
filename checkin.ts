@@ -76,6 +76,21 @@ function isTruthyEnv(value: string | undefined): boolean {
   return /^(1|true|yes|on)$/i.test((value ?? "").trim());
 }
 
+function getBrowserProxyServer(): string {
+  const explicitProxy = (process.env.NS_PROXY_SERVER ?? "").trim();
+  if (explicitProxy) return explicitProxy;
+
+  const fallbackProxy = (
+    process.env.HTTPS_PROXY ??
+    process.env.HTTP_PROXY ??
+    process.env.https_proxy ??
+    process.env.http_proxy ??
+    ""
+  ).trim();
+
+  return fallbackProxy;
+}
+
 function includesChallengeText(text: string): boolean {
   const normalized = text.toLowerCase();
   return (
@@ -154,13 +169,14 @@ async function waitForCloudflareClear(page: Page): Promise<ChallengeState> {
 
 async function runCheckinAttempt(cookies: CookieParam[]): Promise<CheckinResult> {
   const runHeadful = isTruthyEnv(process.env.NS_HEADFUL);
-  const proxyServer = (process.env.NS_PROXY_SERVER ?? "").trim();
+  const proxyServer = getBrowserProxyServer();
   const userDataDir = (process.env.NS_USER_DATA_DIR ?? "").trim() || DEFAULT_USER_DATA_DIR;
   const launchArgs = [
     "--no-sandbox",
     "--disable-setuid-sandbox",
     "--disable-dev-shm-usage",
     "--disable-blink-features=AutomationControlled",
+    "--disable-features=IsolateOrigins,site-per-process",
     "--window-size=1365,900",
   ];
 
@@ -179,6 +195,7 @@ async function runCheckinAttempt(cookies: CookieParam[]): Promise<CheckinResult>
   try {
     const page = await browser.newPage();
     await page.setViewport({ width: 1365, height: 900 });
+    await page.setBypassCSP(true);
 
     // Reason: 依赖 stealth 插件统一处理 UA / client hints，避免手动覆写后出现指纹不一致
     // Reason: 先设置 cookie 再导航，这样 session cookie 会随首次请求一起发送
