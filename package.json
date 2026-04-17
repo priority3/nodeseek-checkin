@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "checkin": "tsx checkin.ts",
+    "checkin:init": "NS_BOOTSTRAP=1 tsx checkin.ts",
     "checkin:hotaru": "tsx hotaru-checkin.ts",
     "checkin:apitestus": "tsx apitestus-checkin.ts",
     "checkin:zenscaleai": "tsx zenscaleai-checkin.ts",

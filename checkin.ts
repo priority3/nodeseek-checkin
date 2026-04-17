@@ -1,6 +1,8 @@
 import puppeteer from "puppeteer-extra";
 import StealthPlugin from "puppeteer-extra-plugin-stealth";
+import fs from "fs";
 import https from "https";
+import path from "path";
 import type { Page } from "puppeteer";
 
 // Reason: stealth 插件修补了多个浏览器指纹特征，降低被 Cloudflare 检测为自动化的概率
@@ -12,12 +14,12 @@ const PUSHPLUS_API = "https://www.pushplus.plus/send";
 const CF_MAX_WAIT_MS = 45000;
 const CF_POLL_INTERVAL_MS = 3000;
 const CF_RELOAD_AFTER_MS = 18000;
-const CF_PROCEED_WITH_CLEARANCE_AFTER_MS = 21000;
+const BOOTSTRAP_MAX_WAIT_MS = 10 * 60 * 1000;
 const RETRY_DELAY_MS = 5000;
 const MAX_ATTEMPTS = 2;
 const NAV_TIMEOUT_MS = 60000;
 const PUSHPLUS_TITLE_MAX_LEN = 96;
-const DEFAULT_USER_DATA_DIR = "/tmp/nodeseek-browser-profile";
+const DEFAULT_USER_DATA_DIR = path.resolve(__dirname, ".profiles", "nodeseek-browser-profile");
 
 interface CookieParam {
   name: string;
@@ -51,6 +53,17 @@ interface ChallengeState {
   hasCfClearance: boolean;
 }
 
+interface WaitForCloudflareOptions {
+  maxWaitMs?: number;
+  manualMode?: boolean;
+}
+
+interface SessionState {
+  challengeState: ChallengeState;
+  hasReusableSession: boolean;
+  usedEnvCookies: boolean;
+}
+
 /**
  * 将 cookie 字符串解析为 Puppeteer 可用的 cookie 对象数组
  */
@@ -79,6 +92,11 @@ function isTruthyEnv(value: string | undefined): boolean {
   return /^(1|true|yes|on)$/i.test((value ?? "").trim());
 }
 
+function parsePositiveInt(value: string | undefined, fallback: number): number {
+  const parsed = Number.parseInt((value ?? "").trim(), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
 function getBrowserProxyServer(): string {
   const explicitProxy = (process.env.NS_PROXY_SERVER ?? "").trim();
   if (explicitProxy) return explicitProxy;
@@ -104,6 +122,89 @@ function includesChallengeText(text: string): boolean {
   );
 }
 
+function isCloudflareCookieName(name: string): boolean {
+  const normalized = name.toLowerCase();
+  return normalized === "cf_clearance" || normalized === "__cf_bm" || normalized === "_cfuvid";
+}
+
+function hasReusableSessionCookies(cookies: Array<{ name: string }>): boolean {
+  if (cookies.length === 0) return false;
+
+  return cookies.some((cookie) => !isCloudflareCookieName(cookie.name));
+}
+
+function shouldRefreshProfileFromEnv(
+  pageCookies: Array<{ name: string; value: string }>,
+  envCookies: CookieParam[]
+): boolean {
+  if (envCookies.length === 0) return false;
+
+  const pageCookieMap = new Map(pageCookies.map((cookie) => [cookie.name, cookie.value]));
+  const envCookieMap = new Map(envCookies.map((cookie) => [cookie.name, cookie.value]));
+
+  const expectedSession = envCookieMap.get("session");
+  if (expectedSession) {
+    return pageCookieMap.get("session") !== expectedSession;
+  }
+
+  return envCookies.some((cookie) => pageCookieMap.get(cookie.name) !== cookie.value);
+}
+
+function getManualBootstrapHint(userDataDir: string): string {
+  return (
+    `Run \`npm run checkin:init\` once to complete Cloudflare/login in a visible browser, ` +
+    `then keep using the same profile at ${userDataDir}.`
+  );
+}
+
+async function waitForReusableSessionCookie(
+  page: Page,
+  envCookies: CookieParam[],
+  maxWaitMs: number
+): Promise<boolean> {
+  const startTime = Date.now();
+  let loginHintShown = false;
+
+  while (Date.now() - startTime < maxWaitMs) {
+    const cookies = await page.cookies();
+    if (hasReusableSessionCookies(cookies) && !shouldRefreshProfileFromEnv(cookies, envCookies)) {
+      return true;
+    }
+
+    if (!loginHintShown) {
+      console.log(
+        "No authenticated NodeSeek session is present yet. If the login page is open, sign in manually in the visible browser window; this script will keep polling."
+      );
+      loginHintShown = true;
+    }
+
+    await sleep(CF_POLL_INTERVAL_MS);
+  }
+
+  return false;
+}
+
+function looksLikeAuthFailure(status: number, body: string): boolean {
+  const normalized = body.toLowerCase();
+  return (
+    status === 401 ||
+    normalized.includes("unauthorized") ||
+    normalized.includes("please login") ||
+    normalized.includes("please log in") ||
+    normalized.includes("sign in") ||
+    normalized.includes("登录")
+  );
+}
+
+function isTransientPageStateError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+  return (
+    message.includes("detached frame") ||
+    message.includes("execution context was destroyed") ||
+    message.includes("cannot find context with specified id")
+  );
+}
+
 async function getChallengeState(page: Page): Promise<ChallengeState> {
   const [title, bodySnippet, cookies] = await Promise.all([
     page.title(),
@@ -122,12 +223,29 @@ async function getChallengeState(page: Page): Promise<ChallengeState> {
   };
 }
 
-async function waitForCloudflareClear(page: Page): Promise<ChallengeState> {
+async function waitForCloudflareClear(
+  page: Page,
+  options: WaitForCloudflareOptions = {}
+): Promise<ChallengeState> {
   const startTime = Date.now();
+  const maxWaitMs = options.maxWaitMs ?? CF_MAX_WAIT_MS;
   let reloaded = false;
+  let manualHintShown = false;
 
-  while (Date.now() - startTime < CF_MAX_WAIT_MS) {
-    const state = await getChallengeState(page);
+  while (Date.now() - startTime < maxWaitMs) {
+    let state: ChallengeState;
+    try {
+      state = await getChallengeState(page);
+    } catch (error) {
+      if (isTransientPageStateError(error)) {
+        console.log(
+          `Cloudflare page state changed during polling (${error instanceof Error ? error.message : String(error)}), retrying...`
+        );
+        await sleep(1000);
+        continue;
+      }
+      throw error;
+    }
     console.log(
       `[CF] title="${state.title}" cf_clearance=${state.hasCfClearance} url=${state.url}`
     );
@@ -149,19 +267,148 @@ async function waitForCloudflareClear(page: Page): Promise<ChallengeState> {
       continue;
     }
 
+    if (options.manualMode && !manualHintShown && elapsedMs >= CF_MAX_WAIT_MS) {
+      const remainingSeconds = Math.max(1, Math.ceil((maxWaitMs - elapsedMs) / 1000));
+      console.log(
+        `Cloudflare challenge is still active. Complete it manually in the opened browser window; the script will keep polling for ${remainingSeconds}s more.`
+      );
+      manualHintShown = true;
+    }
+
     await sleep(CF_POLL_INTERVAL_MS);
   }
 
   const finalState = await getChallengeState(page);
   throw new Error(
-    `Cloudflare challenge did not clear within ${CF_MAX_WAIT_MS / 1000}s ` +
+    `Cloudflare challenge did not clear within ${Math.ceil(maxWaitMs / 1000)}s ` +
       `(title="${finalState.title}", cf_clearance=${finalState.hasCfClearance}, elapsed=${Date.now() - startTime}ms, url=${finalState.url}, ` +
       `snippet="${finalState.bodySnippet}")`
   );
 }
 
+async function sendCheckinRequest(page: Page): Promise<PageEvalResult> {
+  console.log("Sending check-in request...");
+  const result: PageEvalResult = await page.evaluate(async (url: string) => {
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        credentials: "include",
+        headers: { Accept: "application/json, text/plain, */*" },
+      });
+      return { status: res.status, body: await res.text() };
+    } catch (err) {
+      return { status: 0, body: (err as Error).message };
+    }
+  }, CHECKIN_URL);
+
+  console.log(`HTTP Status: ${result.status}`);
+  console.log(`Response: ${result.body}`);
+  return result;
+}
+
+async function applyEnvCookiesToPage(page: Page, cookies: CookieParam[]): Promise<void> {
+  if (cookies.length === 0) return;
+
+  console.log("Applying NS_COOKIE to the browser session...");
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  await page.setCookie(...(cookies as any[]));
+}
+
+async function ensureNodeSeekSession(
+  page: Page,
+  cookies: CookieParam[],
+  userDataDir: string,
+  allowManualMode: boolean
+): Promise<SessionState> {
+  const maxWaitMs = allowManualMode
+    ? parsePositiveInt(process.env.NS_BOOTSTRAP_WAIT_MS, BOOTSTRAP_MAX_WAIT_MS)
+    : CF_MAX_WAIT_MS;
+  let usedEnvCookies = false;
+
+  console.log("Navigating to NodeSeek...");
+  await page.goto(SITE_URL, {
+    waitUntil: "domcontentloaded",
+    timeout: NAV_TIMEOUT_MS,
+  });
+
+  console.log(`Waiting up to ${Math.ceil(maxWaitMs / 1000)}s for Cloudflare to clear...`);
+  let challengeState = await waitForCloudflareClear(page, {
+    maxWaitMs,
+    manualMode: allowManualMode,
+  });
+
+  let pageCookies = await page.cookies();
+  let hasSession =
+    hasReusableSessionCookies(pageCookies) && !shouldRefreshProfileFromEnv(pageCookies, cookies);
+
+  if (shouldRefreshProfileFromEnv(pageCookies, cookies)) {
+    console.log(
+      "The persistent browser profile does not match the provided NS_COOKIE. Refreshing the profile from NS_COOKIE..."
+    );
+    await applyEnvCookiesToPage(page, cookies);
+    usedEnvCookies = true;
+    await page.reload({
+      waitUntil: "domcontentloaded",
+      timeout: NAV_TIMEOUT_MS,
+    });
+    challengeState = await waitForCloudflareClear(page, {
+      maxWaitMs,
+      manualMode: allowManualMode,
+    });
+    pageCookies = await page.cookies();
+    hasSession =
+      hasReusableSessionCookies(pageCookies) && !shouldRefreshProfileFromEnv(pageCookies, cookies);
+  } else if (!hasSession && cookies.length > 0) {
+    console.log(
+      "No reusable NodeSeek session was found in the persistent browser profile. Seeding the profile from NS_COOKIE..."
+    );
+    await applyEnvCookiesToPage(page, cookies);
+    usedEnvCookies = true;
+    await page.reload({
+      waitUntil: "domcontentloaded",
+      timeout: NAV_TIMEOUT_MS,
+    });
+    challengeState = await waitForCloudflareClear(page, {
+      maxWaitMs,
+      manualMode: allowManualMode,
+    });
+    pageCookies = await page.cookies();
+    hasSession =
+      hasReusableSessionCookies(pageCookies) && !shouldRefreshProfileFromEnv(pageCookies, cookies);
+  }
+
+  if (!hasSession && allowManualMode) {
+    const remainingWaitMs = Math.max(0, maxWaitMs - CF_MAX_WAIT_MS);
+    if (remainingWaitMs > 0) {
+      hasSession = await waitForReusableSessionCookie(page, cookies, remainingWaitMs);
+      if (hasSession) {
+        challengeState = await getChallengeState(page);
+      }
+    }
+  }
+
+  if (!hasSession) {
+    throw new Error(
+      `No reusable NodeSeek session is available in ${userDataDir}. ${getManualBootstrapHint(
+        userDataDir
+      )}`
+    );
+  }
+
+  console.log(
+    `Page state before API request: title="${challengeState.title}" cf_clearance=${challengeState.hasCfClearance} url=${challengeState.url}`
+  );
+
+  return {
+    challengeState,
+    hasReusableSession: hasSession,
+    usedEnvCookies,
+  };
+}
+
 async function runCheckinAttempt(cookies: CookieParam[]): Promise<CheckinResult> {
   const runHeadful = isTruthyEnv(process.env.NS_HEADFUL);
+  const allowManualMode = runHeadful && isTruthyEnv(process.env.NS_MANUAL_CF);
   const proxyServer = getBrowserProxyServer();
   const userDataDir = (process.env.NS_USER_DATA_DIR ?? "").trim() || DEFAULT_USER_DATA_DIR;
   const launchArgs = [
@@ -178,6 +425,7 @@ async function runCheckinAttempt(cookies: CookieParam[]): Promise<CheckinResult>
     launchArgs.push(`--proxy-server=${proxyServer}`);
   }
 
+  fs.mkdirSync(userDataDir, { recursive: true });
   console.log(`Using browser profile: ${userDataDir}`);
   const browser = await puppeteer.launch({
     headless: runHeadful ? false : true,
@@ -189,43 +437,27 @@ async function runCheckinAttempt(cookies: CookieParam[]): Promise<CheckinResult>
     const page = await browser.newPage();
     await page.setViewport({ width: 1365, height: 900 });
     await page.setBypassCSP(true);
-
-    // Reason: 依赖 stealth 插件统一处理 UA / client hints，避免手动覆写后出现指纹不一致
-    // Reason: 先设置 cookie 再导航，这样 session cookie 会随首次请求一起发送
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await page.setCookie(...(cookies as any[]));
-
-    console.log("Navigating to NodeSeek...");
-    await page.goto(SITE_URL, {
-      waitUntil: "domcontentloaded",
-      timeout: NAV_TIMEOUT_MS,
-    });
-
-    // Reason: Cloudflare managed challenge 的耗时不稳定，改为轮询等待并在超时前重载一次
-    console.log(`Waiting up to ${CF_MAX_WAIT_MS / 1000}s for Cloudflare to clear...`);
-    const challengeState = await waitForCloudflareClear(page);
-    console.log(
-      `Page state before API request: title="${challengeState.title}" cf_clearance=${challengeState.hasCfClearance} url=${challengeState.url}`
-    );
+    await ensureNodeSeekSession(page, cookies, userDataDir, allowManualMode);
 
     // Reason: 在已通过 Cloudflare 验证的浏览器上下文中发起 fetch，
-    // 这样请求会自动携带 cf_clearance cookie 和正确的浏览器指纹
-    console.log("Sending check-in request...");
-    const result: PageEvalResult = await page.evaluate(async (url: string) => {
-      try {
-        const res = await fetch(url, {
-          method: "POST",
-          credentials: "include",
-          headers: { Accept: "application/json, text/plain, */*" },
-        });
-        return { status: res.status, body: await res.text() };
-      } catch (err) {
-        return { status: 0, body: (err as Error).message };
-      }
-    }, CHECKIN_URL);
+    // 这样请求会自动携带浏览器里现有的验证/登录态 cookie
+    let result = await sendCheckinRequest(page);
 
-    console.log(`HTTP Status: ${result.status}`);
-    console.log(`Response: ${result.body}`);
+    if (looksLikeAuthFailure(result.status, result.body) && cookies.length > 0) {
+      console.log(
+        "The persisted browser session looks expired. Refreshing the profile from NS_COOKIE and retrying once..."
+      );
+      await applyEnvCookiesToPage(page, cookies);
+      await page.reload({
+        waitUntil: "domcontentloaded",
+        timeout: NAV_TIMEOUT_MS,
+      });
+      await waitForCloudflareClear(page, {
+        maxWaitMs: allowManualMode ? BOOTSTRAP_MAX_WAIT_MS : CF_MAX_WAIT_MS,
+        manualMode: allowManualMode,
+      });
+      result = await sendCheckinRequest(page);
+    }
 
     const combinedResponseText = result.body.toLowerCase();
     if (
@@ -237,6 +469,14 @@ async function runCheckinAttempt(cookies: CookieParam[]): Promise<CheckinResult>
         `Check-in request was still challenged by Cloudflare (HTTP ${result.status}): ${result.body
           .replace(/\s+/g, " ")
           .slice(0, 240)}`
+      );
+    }
+
+    if (looksLikeAuthFailure(result.status, result.body)) {
+      throw new Error(
+        `NodeSeek session is no longer authenticated. Refresh NS_COOKIE or ${getManualBootstrapHint(
+          userDataDir
+        )}`
       );
     }
 
@@ -272,18 +512,61 @@ async function runCheckinAttempt(cookies: CookieParam[]): Promise<CheckinResult>
   }
 }
 
-async function checkin(): Promise<void> {
-  const cookieStr = process.env.NS_COOKIE;
-  if (!cookieStr) {
-    console.error("ERROR: NS_COOKIE is not set.");
-    process.exit(1);
+async function bootstrapSession(cookies: CookieParam[]): Promise<void> {
+  const proxyServer = getBrowserProxyServer();
+  const userDataDir = (process.env.NS_USER_DATA_DIR ?? "").trim() || DEFAULT_USER_DATA_DIR;
+  const launchArgs = [
+    "--no-sandbox",
+    "--disable-setuid-sandbox",
+    "--disable-dev-shm-usage",
+    "--disable-blink-features=AutomationControlled",
+    "--disable-features=IsolateOrigins,site-per-process",
+    "--window-size=1365,900",
+  ];
+
+  if (proxyServer) {
+    console.log(`Using browser proxy: ${proxyServer}`);
+    launchArgs.push(`--proxy-server=${proxyServer}`);
   }
 
+  fs.mkdirSync(userDataDir, { recursive: true });
+  console.log(`Using browser profile: ${userDataDir}`);
+  console.log(
+    "A visible browser window will open. If Cloudflare or the login page appears, finish it manually once; the saved profile will be reused later."
+  );
+
+  const browser = await puppeteer.launch({
+    headless: false,
+    args: launchArgs,
+    userDataDir,
+  });
+
+  try {
+    const page = await browser.newPage();
+    await page.setViewport({ width: 1365, height: 900 });
+    await page.setBypassCSP(true);
+    await ensureNodeSeekSession(page, cookies, userDataDir, true);
+    console.log("Bootstrap completed. The browser profile is warmed up for future check-ins.");
+  } finally {
+    await browser.close();
+  }
+}
+
+async function checkin(): Promise<void> {
   console.log("=== NodeSeek Check-in ===");
   console.log(`Time: ${new Date().toISOString()}`);
 
-  const cookies = parseCookies(cookieStr);
+  const cookieStr = process.env.NS_COOKIE ?? "";
+  const cookies = cookieStr ? parseCookies(cookieStr) : [];
   console.log(`Parsed ${cookies.length} cookies`);
+
+  if (isTruthyEnv(process.env.NS_BOOTSTRAP)) {
+    console.log(
+      "Bootstrap mode enabled. A visible browser session will be opened so you can finish Cloudflare/login once and reuse the saved profile later."
+    );
+    await bootstrapSession(cookies);
+    return;
+  }
 
   let lastError: Error | null = null;
 
