@@ -7,6 +7,7 @@
     "checkin:init": "NS_BOOTSTRAP=1 tsx checkin.ts",
     "checkin:deepflood": "tsx deepflood-checkin.ts",
     "checkin:deepflood:init": "DF_BOOTSTRAP=1 tsx deepflood-checkin.ts",
+    "checkin:kfc": "tsx kfc-checkin.ts",
     "checkin:hotaru": "tsx hotaru-checkin.ts",
     "checkin:apitestus": "tsx apitestus-checkin.ts",
     "checkin:zenscaleai": "tsx zenscaleai-checkin.ts",
