@@ -1,10 +1,10 @@
 name: Xcode.best Daily Check-in
 
-on:
-  workflow_dispatch: {}
-  schedule:
-    # Runs daily at 08:15 Asia/Shanghai (00:15 UTC)
-    - cron: "15 0 * * *"
+# on:
+#   workflow_dispatch: {}
+#   schedule:
+#     # Runs daily at 08:15 Asia/Shanghai (00:15 UTC)
+#     - cron: "15 0 * * *"
 
 jobs:
   checkin:
