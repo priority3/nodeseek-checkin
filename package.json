@@ -15,7 +15,8 @@
     "checkin:x666": "tsx x666-checkin.ts",
     "checkin:42w": "tsx 42w-checkin.ts",
     "checkin:clove": "tsx clove-checkin.ts",
-    "checkin:icevua": "tsx icevua-checkin.ts"
+    "checkin:icevua": "tsx icevua-checkin.ts",
+    "checkin:elysiver": "tsx elysiver-checkin.ts"
   },
   "dependencies": {
     "puppeteer": "^24.2.0",
